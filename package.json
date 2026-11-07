@@ -1,0 +1,31 @@
+{
+  "name": "web-dosbox",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "dropbox": "^8.2.0",
+    "file-dialog": "0.0.8",
+    "file-saver": "^2.0.5",
+    "js-dos": "^6.22.60",
+    "nano-loader": "^1.1.2",
+    "nipplejs": "^0.8.7",
+    "preact": "^10.19.3"
+  },
+  "devDependencies": {
+    "@heroicons/react": "^2.1.1",
+    "@preact/preset-vite": "^2.8.1",
+    "@types/file-saver": "^2.0.7",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12",
+    "vite-plugin-static-copy": "^1.0.1"
+  }
+}

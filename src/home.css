@@ -1,0 +1,199 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: #030712;
+    color: #f3f4f6;
+    overflow-x: hidden;
+    touch-action: manipulation;
+  }
+
+  button {
+    @apply focus:outline-none;
+  }
+}
+
+@layer components {
+  /** App Root */
+  .app-root {
+    @apply min-h-screen w-full flex flex-col bg-gray-950 text-gray-100;
+  }
+
+  /** Launcher Layout */
+  .launcher-container {
+    @apply min-h-screen w-full flex flex-col max-w-6xl mx-auto px-4 py-6 md:px-8;
+  }
+
+  .launcher-header {
+    @apply flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-gray-800/80;
+  }
+
+  .launcher-logo-icon {
+    @apply px-2.5 py-1 rounded bg-amber-500 text-gray-950 font-black font-mono text-sm tracking-tighter shadow-md shadow-amber-500/20;
+  }
+
+  .launcher-btn-secondary {
+    @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-900/80 hover:bg-gray-800 text-gray-200 text-xs font-medium transition-all;
+  }
+
+  .launcher-main {
+    @apply flex-1 py-8;
+  }
+
+  .launcher-section-title {
+    @apply flex items-center justify-between mb-6 pb-2 border-b border-gray-900;
+  }
+
+  /** Game Cards */
+  .game-grid {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6;
+  }
+
+  .game-card {
+    @apply flex flex-col overflow-hidden rounded-xl border border-gray-800/90 bg-gray-900/60 transition-all duration-200 hover:border-gray-700 hover:bg-gray-900/90 hover:shadow-xl hover:shadow-black/60;
+  }
+
+  .game-card__media {
+    @apply relative aspect-[16/9] w-full overflow-hidden bg-gray-950 border-b border-gray-800/60;
+  }
+
+  .game-card__img {
+    @apply h-full w-full object-cover transition-transform duration-300 group-hover:scale-105;
+  }
+
+  .game-card__placeholder {
+    @apply flex h-full w-full items-center justify-center bg-gray-900;
+  }
+
+  .game-card__overlay {
+    @apply absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 backdrop-blur-sm transition-opacity duration-200 group-hover:opacity-100;
+  }
+
+  .game-card__play-btn {
+    @apply flex items-center gap-2 px-5 py-2.5 rounded-full bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-sm tracking-wide shadow-lg shadow-amber-500/30 transform transition active:scale-95;
+  }
+
+  .game-card__body {
+    @apply flex flex-1 flex-col p-4;
+  }
+
+  .game-card__title {
+    @apply font-bold text-base text-gray-100 group-hover:text-amber-400 transition-colors;
+  }
+
+  .game-card__subtitle {
+    @apply text-xs text-gray-500 font-mono;
+  }
+
+  .game-card__year {
+    @apply px-2 py-0.5 rounded bg-gray-800 text-[11px] font-mono text-gray-300;
+  }
+
+  .game-tag {
+    @apply px-2 py-0.5 rounded text-[11px] font-medium;
+  }
+
+  .game-card__desc {
+    @apply text-xs text-gray-400 line-clamp-3 leading-relaxed mt-1 flex-1;
+  }
+
+  .game-card__quick-play {
+    @apply text-xs font-semibold text-amber-400 hover:text-amber-300 transition-colors;
+  }
+
+  /** In-Game Styles */
+  .game {
+    @apply fixed inset-0 w-full h-full flex items-stretch flex-col landscape:flex-row select-none bg-black overflow-hidden;
+  }
+
+  .game__header {
+    @apply relative flex grow-0 shrink-0 items-stretch flex-col landscape:flex-row z-20;
+  }
+
+  .game__header__nav {
+    @apply flex items-center px-2 py-1 bg-gray-900 border-b border-gray-800 landscape:border-b-0 landscape:border-r landscape:border-gray-800 landscape:flex-col landscape:py-4 landscape:px-0;
+  }
+
+  .game__header__item {
+    @apply block cursor-pointer fill-current text-white p-2 rounded hover:bg-white/20 active:bg-white/30 transition-colors;
+  }
+
+  .game__header__item--disabled {
+    @apply text-gray-600 hover:bg-transparent;
+  }
+
+  .game__header__fns {
+    @apply absolute top-full left-0 z-30 bg-gray-800 border border-gray-700 rounded-b shadow-2xl hidden py-1;
+    @apply landscape:left-full landscape:top-0 landscape:rounded-b-none landscape:rounded-r;
+  }
+
+  .game__header__fns--toggled {
+    @apply block;
+  }
+
+  .game__header__fns__item {
+    @apply cursor-pointer w-full text-white py-2 px-4 flex items-center gap-x-2 text-xs hover:bg-white/10 active:bg-white/20 whitespace-nowrap;
+  }
+
+  .game__screen {
+    @apply relative flex-auto flex items-center justify-center overflow-hidden;
+    canvas {
+      @apply w-[var(--screen-width)] h-[var(--screen-height)];
+      image-rendering: auto !important;
+    }
+    .dosbox-container {
+      @apply w-full h-full;
+    }
+  }
+
+  .game__canvas,
+  .game__event-blocker {
+    @apply absolute inset-x-0 inset-y-0 flex items-center justify-center;
+  }
+
+  /** Toast */
+  .toast {
+    @apply absolute bottom-6 left-1/2 -translate-x-1/2 px-3 py-2 bg-gray-900/90 text-amber-300 border border-amber-500/30 shadow-2xl pointer-events-none rounded transition-opacity duration-500 opacity-0 text-xs whitespace-pre text-center z-50;
+  }
+
+  .toast--active {
+    @apply opacity-100;
+  }
+
+  /** Virtual Keyboard */
+  .virtual-keyboard {
+    @apply absolute right-2 bottom-2 select-none border-separate border-spacing-1 z-30;
+    td {
+      @apply size-[40px] p-0;
+      @apply lg:size-[52px];
+    }
+  }
+
+  .virtual-keyboard__key {
+    @apply relative box-border w-full h-full rounded text-white bg-gray-800/70 border border-gray-700/50 backdrop-blur active:bg-amber-500/30;
+  }
+
+  .virtual-keyboard__key__label {
+    @apply absolute top-1 left-1.5 text-xs leading-none font-mono;
+    @apply lg:text-sm;
+  }
+
+  .virtual-keyboard__key__or {
+    @apply text-[75%] text-white/40;
+  }
+
+  .virtual-keyboard__key__description {
+    @apply hidden absolute bottom-1 left-1.5 text-[10px] text-white/70;
+    @apply lg:block;
+  }
+}
