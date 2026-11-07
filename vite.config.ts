@@ -1,10 +1,12 @@
 import { defineConfig } from "vite";
 import preact from "@preact/preset-vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import { localGamesPlugin } from "./server/local-games-plugin";
 
 export default defineConfig({
   plugins: [
     preact(),
+    localGamesPlugin(),
     viteStaticCopy({
       targets: [
         {
@@ -32,10 +34,6 @@ export default defineConfig({
               .replace("blocksize=1024", "blocksize=4096")
               .replace("prebuffer=20", "prebuffer=100")
               .replace("pcspeaker=true", "pcspeaker=false"),
-        },
-        {
-          src: "game/*",
-          dest: "static/game",
         },
       ],
     }),

@@ -1,4 +1,6 @@
 node_modules
 dist
+game
 *.local
+*.tsbuildinfo
 .DS_Store

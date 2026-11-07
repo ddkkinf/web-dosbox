@@ -1,9 +1,14 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import fileDialog from "file-dialog";
 import { saveAs } from "file-saver";
 import nipple from "nipplejs";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
-import { GameConfig } from "../config/games";
+import {
+  GameConfig,
+  resetLocalGameFiles,
+  uploadLocalGameFile,
+} from "../config/games";
 import { createDos } from "../dos/create-dos";
 import {
   EventHandler,
@@ -17,6 +22,12 @@ import {
   createIdbFileSystem,
 } from "../fs/create-idb-file-system";
 import { detectFileChange } from "../fs/detect-file-change";
+import {
+  extractLocalBundleToDosFs,
+  readDosFsFileCaseInsensitive,
+  watchDosFsDirectoryChanges,
+  writeDosFsFileCaseInsensitive,
+} from "../fs/local-dir-sync";
 import { VirtualKeyboard } from "./VirtualKeyboard";
 
 const JOYSTICK_MAPS = [
@@ -84,6 +95,14 @@ export function Game({ game, onExit }: GameProps) {
   const keydownHandlers = useRef<EventHandler[]>([]);
   const keyupHandlers = useRef<EventHandler[]>([]);
 
+  const dosFsRef = useRef<any>(null);
+  const ciRef = useRef<any>(null);
+  const database = useRef<IdbFileSystem>();
+
+  const isLocalDir = game.sourceType === "local-dir";
+  const saveFile = game.saveFile || "SAVE.DAT";
+  const modId = game.id;
+
   const [toastMessage, setToastMessage] = useState<string | undefined>();
   const [innerToastMessage, setInnerToastMessage] = useState<
     string | undefined
@@ -98,10 +117,6 @@ export function Game({ game, onExit }: GameProps) {
       return () => clearTimeout(timeout);
     }
   }, [toastMessage]);
-
-  const database = useRef<IdbFileSystem>();
-  const saveFile = game.saveFile || "SAVE.DAT";
-  const modId = game.id;
 
   const handleResize = useCallback(() => {
     if (!screen.current) return;
@@ -166,70 +181,6 @@ export function Game({ game, onExit }: GameProps) {
     joystickCodeBefore.current = joystickCode;
   }, [joystickCode, joystickCodeBefore, handleKeyDown, handleKeyUp]);
 
-  const start = useCallback(async () => {
-    if (!canvas.current || !mobileController.current) return;
-
-    const joystick = nipple.create({
-      zone: mobileController.current,
-    });
-    blockAddEventListener(document, ["keydown", "keyup", "keypress"]);
-    const db = (database.current = await createIdbFileSystem(modId, 1));
-    const { fs, main } = await createDos(canvas.current);
-    const extractUrl =
-      game.gameFile.startsWith("blob:") ||
-      game.gameFile.startsWith("http:") ||
-      game.gameFile.startsWith("https:") ||
-      game.gameFile.startsWith("/")
-        ? game.gameFile
-        : `/static/game/${game.gameFile}`;
-    await fs.extract(extractUrl);
-
-    if (saveFile) {
-      const saveFileBody = await db.load(saveFile);
-      if (saveFileBody) {
-        // Overwrite Save File
-        (fs as any).fs.writeFile(saveFile, saveFileBody); // eslint-disable-line @typescript-eslint/no-explicit-any
-      }
-    }
-
-    await main(["-c", game.entry]);
-    keydownHandlers.current = getBlockedHandler(document, "keydown");
-    keyupHandlers.current = getBlockedHandler(document, "keyup");
-    restoreAddEventListener(document);
-
-    document.addEventListener("keydown", handleDocumentKeyDown);
-    document.addEventListener("keyup", handleDocumentKeyUp);
-
-    joystick.on("move", (_, data) => {
-      if (data.force > 0.3) {
-        setJoystickCode(
-          JOYSTICK_MAPS[(Math.floor((data.angle.degree - 22.5) / 45) + 8) % 8],
-        );
-      } else {
-        setJoystickCode(null);
-      }
-    });
-
-    joystick.on("end", () => {
-      setJoystickCode(null);
-    });
-
-    if (saveFile) {
-      detectFileChange(fs, saveFile, () => {
-        try {
-          db.save(saveFile, (fs as any).fs.readFile(saveFile)); // eslint-disable-line @typescript-eslint/no-explicit-any
-          setToastMessage("세이브 파일이 브라우저에 저장되었습니다.");
-          isClearExit.current = true;
-          setTimeout(() => {
-            isClearExit.current = false;
-          }, 5000);
-        } catch (err) {
-          console.error("Save error:", err);
-        }
-      });
-    }
-  }, [game, modId, saveFile, handleDocumentKeyDown, handleDocumentKeyUp]);
-
   useEffect(() => {
     handleResize();
 
@@ -237,9 +188,140 @@ export function Game({ game, onExit }: GameProps) {
     window.addEventListener("resize", handleResize);
     window.addEventListener("beforeunload", handleBeforeUnload);
 
-    start();
+    let disposed = false;
+    let stopWatcher: (() => void) | undefined;
+    let joystick: ReturnType<typeof nipple.create> | undefined;
+
+    const boot = async () => {
+      if (!canvas.current || !mobileController.current) return;
+
+      joystick = nipple.create({
+        zone: mobileController.current,
+      });
+
+      blockAddEventListener(document, ["keydown", "keyup", "keypress"]);
+
+      try {
+        const { fs, main } = await createDos(canvas.current);
+        if (disposed) return;
+        dosFsRef.current = fs;
+
+        if (isLocalDir) {
+          await extractLocalBundleToDosFs(fs, game.gameFile);
+          if (disposed) return;
+
+          stopWatcher = watchDosFsDirectoryChanges(fs, async (changedFiles) => {
+            try {
+              const savedNames: string[] = [];
+              for (const item of changedFiles) {
+                const res = await uploadLocalGameFile(
+                  game.id,
+                  item.relPath,
+                  item.bytes,
+                );
+                savedNames.push(res.relPath);
+              }
+              setToastMessage(
+                `로컬 폴더에 저장됨: ${savedNames.join(", ")}`,
+              );
+              isClearExit.current = true;
+              setTimeout(() => {
+                isClearExit.current = false;
+              }, 5000);
+            } catch (err) {
+              console.error("Local save sync error:", err);
+              setToastMessage("로컬 세이브 동기화 중 오류가 발생했습니다.");
+            }
+          });
+        } else {
+          const db = (database.current = await createIdbFileSystem(modId, 1));
+          const extractUrl =
+            game.gameFile.startsWith("blob:") ||
+            game.gameFile.startsWith("http:") ||
+            game.gameFile.startsWith("https:") ||
+            game.gameFile.startsWith("/")
+              ? game.gameFile
+              : `/static/game/${game.gameFile}`;
+          await fs.extract(extractUrl);
+          if (disposed) return;
+
+          if (saveFile) {
+            const saveFileBody = await db.load(saveFile);
+            if (saveFileBody) {
+              writeDosFsFileCaseInsensitive(fs, saveFile, saveFileBody);
+            }
+          }
+
+          if (saveFile) {
+            stopWatcher = detectFileChange(fs, saveFile, () => {
+              try {
+                const found = readDosFsFileCaseInsensitive(fs, saveFile);
+                if (found) {
+                  db.save(saveFile, found.bytes);
+                  setToastMessage("세이브 파일이 브라우저에 저장되었습니다.");
+                  isClearExit.current = true;
+                  setTimeout(() => {
+                    isClearExit.current = false;
+                  }, 5000);
+                }
+              } catch (err) {
+                console.error("Save error:", err);
+              }
+            });
+          }
+        }
+
+        const ci = await main(["-c", game.entry]);
+        ciRef.current = ci;
+        if (disposed) {
+          ci?.exit?.();
+          return;
+        }
+
+        keydownHandlers.current = getBlockedHandler(document, "keydown");
+        keyupHandlers.current = getBlockedHandler(document, "keyup");
+        restoreAddEventListener(document);
+
+        document.addEventListener("keydown", handleDocumentKeyDown);
+        document.addEventListener("keyup", handleDocumentKeyUp);
+
+        joystick.on("move", (_, data) => {
+          if (data.force > 0.3) {
+            setJoystickCode(
+              JOYSTICK_MAPS[
+                (Math.floor((data.angle.degree - 22.5) / 45) + 8) % 8
+              ],
+            );
+          } else {
+            setJoystickCode(null);
+          }
+        });
+
+        joystick.on("end", () => {
+          setJoystickCode(null);
+        });
+      } catch (err) {
+        restoreAddEventListener(document);
+        console.error("Failed to start game:", err);
+        setToastMessage(
+          err instanceof Error
+            ? `구동 오류: ${err.message}`
+            : "게임을 시작하는 중 오류가 발생했습니다.",
+        );
+      }
+    };
+
+    boot();
 
     return () => {
+      disposed = true;
+      stopWatcher?.();
+      joystick?.destroy();
+      try {
+        ciRef.current?.exit?.();
+      } catch {
+        // Ignore runtime exit errors
+      }
       document.removeEventListener("keydown", handleDocumentKeyDown);
       document.removeEventListener("keyup", handleDocumentKeyUp);
       document.removeEventListener("fullscreenchange", handleFullScreenChange);
@@ -247,12 +329,15 @@ export function Game({ game, onExit }: GameProps) {
       window.removeEventListener("resize", handleResize);
     };
   }, [
+    game,
+    isLocalDir,
+    modId,
+    saveFile,
     handleResize,
     handleBeforeUnload,
     handleFullScreenChange,
     handleDocumentKeyDown,
     handleDocumentKeyUp,
-    start,
   ]);
 
   const toggleFns = useCallback(() => {
@@ -279,42 +364,59 @@ export function Game({ game, onExit }: GameProps) {
   }, [onExit]);
 
   const resetGame = useCallback(async () => {
-    if (!database.current) {
-      return;
-    }
     if (
       !confirm(
-        "게임을 초기화하면 저장된 데이터가 삭제될 수 있습니다.\n계속 진행하시겠습니까?",
+        "세이브를 초기 상태로 되돌리면 진행 중인 저장 데이터가 초기화됩니다.\n계속 진행하시겠습니까?",
       )
     ) {
       return;
     }
-    await database.current.delete(saveFile);
-    setToastMessage("세이브 파일이 삭제되었습니다. 새로고침 후 적용됩니다.");
-  }, [saveFile]);
+
+    try {
+      if (isLocalDir) {
+        await resetLocalGameFiles(game.id);
+        setToastMessage("로컬 세이브가 초기 상태로 복원되었습니다. 런처에서 다시 실행하세요.");
+      } else if (database.current) {
+        await database.current.delete(saveFile);
+        setToastMessage("세이브 파일이 삭제되었습니다. 다시 실행하면 적용됩니다.");
+      }
+    } catch (err) {
+      console.error("Reset error:", err);
+      setToastMessage("세이브 초기화에 실패했습니다.");
+    }
+  }, [game.id, isLocalDir, saveFile]);
 
   const downloadSaveFile = useCallback(async () => {
-    if (!database.current) {
-      return;
-    }
-    const data = await database.current.load(saveFile);
-    if (!data) {
-      setToastMessage("🚫 세이브 파일을 찾을 수 없습니다.");
-      return;
+    if (dosFsRef.current) {
+      const liveFound = readDosFsFileCaseInsensitive(dosFsRef.current, saveFile);
+      if (liveFound) {
+        const url = URL.createObjectURL(
+          new Blob([liveFound.bytes as unknown as BlobPart], {
+            type: "application/octet-stream",
+          }),
+        );
+        saveAs(url, liveFound.relPath.split("/").pop() || saveFile);
+        return;
+      }
     }
 
-    const url = URL.createObjectURL(
-      new Blob([data as unknown as BlobPart], {
-        type: "application/octet-stream",
-      }),
-    );
-    saveAs(url, saveFile);
+    if (database.current) {
+      const data = await database.current.load(saveFile);
+      if (data) {
+        const url = URL.createObjectURL(
+          new Blob([data as unknown as BlobPart], {
+            type: "application/octet-stream",
+          }),
+        );
+        saveAs(url, saveFile);
+        return;
+      }
+    }
+
+    setToastMessage(`세이브 파일(${saveFile})을 찾을 수 없습니다.`);
   }, [saveFile]);
 
   const uploadSaveFile = useCallback(async () => {
-    if (!database.current) {
-      return;
-    }
     if (
       !confirm(
         "세이브 파일을 불러오면 현재 진행 중인 세이브가 덮어씌워집니다.\n계속 진행하시겠습니까?",
@@ -326,14 +428,27 @@ export function Game({ game, onExit }: GameProps) {
     if (!files[0]) {
       return;
     }
-    database.current.save(
-      saveFile,
-      new Uint8Array(await files[0].arrayBuffer()),
-    );
-    setToastMessage(
-      "세이브 파일이 브라우저에 적용되었습니다.\n새로고침 후 불러오세요.",
-    );
-  }, [saveFile]);
+
+    const bytes = new Uint8Array(await files[0].arrayBuffer());
+    const targetName = game.saveFile || files[0].name || saveFile;
+
+    try {
+      if (dosFsRef.current) {
+        writeDosFsFileCaseInsensitive(dosFsRef.current, targetName, bytes);
+      }
+
+      if (isLocalDir) {
+        await uploadLocalGameFile(game.id, targetName, bytes);
+        setToastMessage(`로컬 폴더(${targetName})에 세이브가 복원되었습니다.`);
+      } else if (database.current) {
+        await database.current.save(targetName, bytes);
+        setToastMessage("브라우저에 세이브 파일이 복원되었습니다.");
+      }
+    } catch (err) {
+      console.error("Upload save error:", err);
+      setToastMessage("세이브 파일 복원에 실패했습니다.");
+    }
+  }, [game.id, game.saveFile, isLocalDir, saveFile]);
 
   const toggleKeyboard = useCallback(() => {
     setEnabledToggleKeyboard(!enabledToggleKeyboard);
@@ -392,7 +507,7 @@ export function Game({ game, onExit }: GameProps) {
                 />
               </svg>
             </button>
-            <span class="text-xs text-gray-400 font-mono px-2 hidden sm:inline landscape:hidden truncate max-w-[150px]">
+            <span class="text-xs text-gray-400 font-mono px-2 hidden sm:inline landscape:hidden truncate max-w-[180px]">
               {game.title}
             </span>
           </div>
