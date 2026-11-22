@@ -1,6 +1,13 @@
 import fileDialog from "file-dialog";
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { GameConfig, fetchLocalGames } from "../config/games";
+import {
+  clearPersistedRootDirHandle,
+  hasFileSystemAccessApi,
+  loadPersistedRootDirHandle,
+  scanDirectoryHandleForGames,
+  scanFileListForGames,
+} from "../fs/browser-local-dir";
 
 export interface LauncherProps {
   onSelectGame: (game: GameConfig) => void;
@@ -23,14 +30,27 @@ export function Launcher({ onSelectGame }: LauncherProps) {
   const [customTitle, setCustomTitle] = useState("");
   const [showCustomModal, setShowCustomModal] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
+  const [activeRootHandle, setActiveRootHandle] = useState<any | null>(null);
+  const [savedHandlePrompt, setSavedHandlePrompt] = useState<any | null>(null);
+  const [isUsingBrowserDir, setIsUsingBrowserDir] = useState<boolean>(false);
+  const dirInputRef = useRef<HTMLInputElement>(null);
 
   const loadGames = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
+      if (activeRootHandle) {
+        const scanned = await scanDirectoryHandleForGames(activeRootHandle);
+        setGames(scanned.games);
+        setDisplayDir(`로컬 폴더: ${scanned.displayDir}`);
+        setIsUsingBrowserDir(true);
+        return;
+      }
+
       const data = await fetchLocalGames();
       setGames(data.games);
       setDisplayDir(data.displayDir || "~/games/dos-box");
+      setIsUsingBrowserDir(false);
     } catch (err) {
       setLoadError(
         err instanceof Error
@@ -40,11 +60,122 @@ export function Launcher({ onSelectGame }: LauncherProps) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [activeRootHandle]);
 
   useEffect(() => {
     loadGames();
   }, [loadGames]);
+
+  // Check if a previously selected local directory handle is stored in IndexedDB
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!hasFileSystemAccessApi()) return;
+      const persisted = await loadPersistedRootDirHandle();
+      if (!persisted || !mounted) return;
+      try {
+        const perm = await persisted.queryPermission?.({ mode: "readwrite" });
+        if (perm === "granted") {
+          setActiveRootHandle(persisted);
+        } else {
+          setSavedHandlePrompt(persisted);
+        }
+      } catch {
+        // Ignore queryPermission error
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handlePickLocalFolder = useCallback(async () => {
+    setLoadError(null);
+    if (hasFileSystemAccessApi()) {
+      try {
+        const handle = await (window as any).showDirectoryPicker({
+          id: "dosbox-games",
+          mode: "readwrite",
+        });
+        setIsLoading(true);
+        const scanned = await scanDirectoryHandleForGames(handle);
+        setActiveRootHandle(handle);
+        setSavedHandlePrompt(null);
+        setGames(scanned.games);
+        setDisplayDir(`로컬 폴더: ${scanned.displayDir}`);
+        setIsUsingBrowserDir(true);
+        if (scanned.games.length === 0) {
+          setLoadError(
+            `선택한 '${handle.name}' 폴더 안에서 DOS 실행 파일(.EXE/.COM/.BAT)을 찾지 못했습니다.`,
+          );
+        }
+      } catch (err: any) {
+        if (err?.name !== "AbortError") {
+          setLoadError(
+            err instanceof Error
+              ? err.message
+              : "로컬 폴더를 여는 중 오류가 발생했습니다.",
+          );
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      dirInputRef.current?.click();
+    }
+  }, []);
+
+  const handleReconnectSavedFolder = useCallback(async () => {
+    if (!savedHandlePrompt) return;
+    try {
+      const perm = await savedHandlePrompt.requestPermission({
+        mode: "readwrite",
+      });
+      if (perm === "granted") {
+        setActiveRootHandle(savedHandlePrompt);
+        setSavedHandlePrompt(null);
+      }
+    } catch (err) {
+      console.error("Permission request failed:", err);
+    }
+  }, [savedHandlePrompt]);
+
+  const handleResetToDefaultCatalog = useCallback(async () => {
+    await clearPersistedRootDirHandle();
+    setActiveRootHandle(null);
+    setSavedHandlePrompt(null);
+    setIsUsingBrowserDir(false);
+  }, []);
+
+  const handleFallbackDirInput = useCallback(
+    async (e: Event) => {
+      const input = e.target as HTMLInputElement;
+      if (!input.files || input.files.length === 0) return;
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const scanned = await scanFileListForGames(input.files);
+        setGames(scanned.games);
+        setDisplayDir(`로컬 폴더: ${scanned.displayDir}`);
+        setIsUsingBrowserDir(true);
+        if (scanned.games.length === 0) {
+          setLoadError(
+            "선택한 폴더 안에서 DOS 실행 파일(.EXE/.COM/.BAT)을 찾지 못했습니다.",
+          );
+        }
+      } catch (err) {
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : "폴더를 읽는 중 오류가 발생했습니다.",
+        );
+      } finally {
+        setIsLoading(false);
+        input.value = "";
+      }
+    },
+    [],
+  );
 
   const hasOtherGames = useMemo(
     () =>
@@ -159,12 +290,24 @@ export function Launcher({ onSelectGame }: LauncherProps) {
               <span class="px-1.5 py-0.5 text-[10px] font-mono uppercase rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 Player v1.0
               </span>
-              <span
-                class="px-2 py-0.5 text-[11px] font-mono rounded bg-gray-900 text-emerald-300 border border-emerald-500/30"
-                title="연동된 로컬 DOS 게임 디렉터리"
+              <button
+                type="button"
+                onClick={handlePickLocalFolder}
+                class="px-2 py-0.5 text-[11px] font-mono rounded bg-gray-900 hover:bg-gray-800 text-emerald-300 border border-emerald-500/40 cursor-pointer transition-colors"
+                title="클릭하여 내 컴퓨터의 로컬 DOS 게임 폴더를 직접 선택합니다"
               >
-                📂 {displayDir} ({games.length})
-              </span>
+                📂 {displayDir} ({games.length}) ▾
+              </button>
+              {isUsingBrowserDir && (
+                <button
+                  type="button"
+                  onClick={handleResetToDefaultCatalog}
+                  class="px-2 py-0.5 text-[10px] font-mono rounded bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700"
+                  title="기본 게임 목록으로 돌아가기"
+                >
+                  기본 목록으로 복귀
+                </button>
+              )}
             </div>
             <p class="text-xs text-gray-400">
               로컬 <code class="text-amber-300/90 font-mono">{displayDir}</code> 폴더의 DOS 게임을 브라우저에서 바로 실행하고 세이브를 직접 동기화합니다
@@ -172,7 +315,38 @@ export function Launcher({ onSelectGame }: LauncherProps) {
           </div>
         </div>
 
+        <input
+          ref={dirInputRef}
+          type="file"
+          class="hidden"
+          onChange={handleFallbackDirInput}
+          {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
+        />
+
         <div class="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-semibold transition-all shadow-sm"
+            onClick={handlePickLocalFolder}
+            title="내 컴퓨터의 로컬 게임 폴더(예: ~/games/dos-box)를 직접 선택하여 연결합니다"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="size-4 text-amber-400"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
+              />
+            </svg>
+            <span>로컬 게임 폴더 선택</span>
+          </button>
+
           <button
             type="button"
             class="launcher-btn-secondary"
@@ -247,6 +421,37 @@ export function Launcher({ onSelectGame }: LauncherProps) {
 
       {/* Main Content Area */}
       <main class="launcher-main">
+        {savedHandlePrompt && !isUsingBrowserDir && (
+          <div class="mb-5 p-3.5 rounded-xl border border-amber-500/40 bg-amber-950/25 text-xs text-amber-200 flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span class="text-base">📂</span>
+              <span>
+                이전에 연결했던 로컬 게임 폴더(
+                <code class="font-mono text-amber-300 font-bold">
+                  {savedHandlePrompt.name}
+                </code>
+                )가 있습니다. 다시 연결하면 로컬 세이브 파일과 직접 동기화됩니다.
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleReconnectSavedFolder}
+                class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold transition-colors"
+              >
+                로컬 폴더 다시 연결
+              </button>
+              <button
+                type="button"
+                onClick={handleResetToDefaultCatalog}
+                class="px-2.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Controls Bar: Search & Category Tabs */}
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-6">
           <div class="flex items-center gap-1.5 p-1 bg-gray-900 border border-gray-800 rounded-lg flex-wrap">

@@ -1,4 +1,8 @@
-export type GameSourceType = "local-dir" | "local-zip" | "custom-zip";
+export type GameSourceType =
+  | "local-dir"
+  | "browser-dir"
+  | "local-zip"
+  | "custom-zip";
 
 export interface GameConfig {
   id: string;

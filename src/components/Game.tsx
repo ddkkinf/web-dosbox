@@ -22,6 +22,12 @@ import {
   createIdbFileSystem,
 } from "../fs/create-idb-file-system";
 import {
+  extractBrowserDirToDosFs,
+  getBrowserGameDirHandle,
+  resetBrowserDirFiles,
+  writeBrowserDirFile,
+} from "../fs/browser-local-dir";
+import {
   extractLocalBundleToDosFs,
   readDosFsFileCaseInsensitive,
   watchDosFsDirectoryChanges,
@@ -285,6 +291,7 @@ export function Game({ game, onExit }: GameProps) {
   const database = useRef<IdbFileSystem>();
 
   const isLocalDir = game.sourceType === "local-dir";
+  const isBrowserDir = game.sourceType === "browser-dir";
   const saveFile = game.saveFile || "SAVE.DAT";
   const modId = game.id;
 
@@ -506,6 +513,52 @@ export function Game({ game, onExit }: GameProps) {
               setToastMessage("로컬 세이브 동기화 중 오류가 발생했습니다.");
             }
           });
+        } else if (isBrowserDir) {
+          await extractBrowserDirToDosFs(fs, game.id);
+          if (disposed) return;
+
+          const hasWritableHandle = !!getBrowserGameDirHandle(game.id);
+          const db = !hasWritableHandle
+            ? (database.current = await createIdbFileSystem(modId, 1))
+            : undefined;
+
+          if (db) {
+            const savedEntries = await db.loadAll();
+            for (const item of savedEntries) {
+              writeDosFsFileCaseInsensitive(fs, item.key, item.data);
+            }
+          }
+
+          stopWatcher = watchDosFsDirectoryChanges(fs, async (changedFiles) => {
+            try {
+              const savedNames: string[] = [];
+              for (const item of changedFiles) {
+                if (hasWritableHandle) {
+                  const res = await writeBrowserDirFile(
+                    game.id,
+                    item.relPath,
+                    item.bytes,
+                  );
+                  savedNames.push(res.relPath);
+                } else if (db) {
+                  await db.save(item.relPath, item.bytes);
+                  savedNames.push(item.relPath);
+                }
+              }
+              setToastMessage(
+                hasWritableHandle
+                  ? `로컬 폴더에 직접 저장됨: ${savedNames.join(", ")}`
+                  : `브라우저에 세이브 저장됨: ${savedNames.join(", ")}`,
+              );
+              isClearExit.current = true;
+              setTimeout(() => {
+                isClearExit.current = false;
+              }, 5000);
+            } catch (err) {
+              console.error("Browser dir save sync error:", err);
+              setToastMessage("로컬 폴더 세이브 저장 중 오류가 발생했습니다.");
+            }
+          });
         } else {
           const db = (database.current = await createIdbFileSystem(modId, 1));
           const extractUrl =
@@ -633,6 +686,7 @@ export function Game({ game, onExit }: GameProps) {
   }, [
     game,
     isLocalDir,
+    isBrowserDir,
     modId,
     saveFile,
     handleResize,
@@ -679,6 +733,9 @@ export function Game({ game, onExit }: GameProps) {
       if (isLocalDir) {
         await resetLocalGameFiles(game.id);
         setToastMessage("로컬 세이브가 초기 상태로 복원되었습니다. 런처에서 다시 실행하세요.");
+      } else if (isBrowserDir && getBrowserGameDirHandle(game.id)) {
+        await resetBrowserDirFiles(game.id);
+        setToastMessage("로컬 폴더 세이브가 초기 상태로 복원되었습니다. 런처에서 다시 실행하세요.");
       } else if (database.current) {
         await database.current.clear();
         setToastMessage("세이브 파일이 삭제되었습니다. 다시 실행하면 적용됩니다.");
@@ -687,7 +744,7 @@ export function Game({ game, onExit }: GameProps) {
       console.error("Reset error:", err);
       setToastMessage("세이브 초기화에 실패했습니다.");
     }
-  }, [game.id, isLocalDir, saveFile]);
+  }, [game.id, isBrowserDir, isLocalDir]);
 
   const downloadSaveFile = useCallback(async () => {
     if (dosFsRef.current) {
@@ -743,6 +800,9 @@ export function Game({ game, onExit }: GameProps) {
       if (isLocalDir) {
         await uploadLocalGameFile(game.id, targetName, bytes);
         setToastMessage(`로컬 폴더(${targetName})에 세이브가 복원되었습니다.`);
+      } else if (isBrowserDir && getBrowserGameDirHandle(game.id)) {
+        await writeBrowserDirFile(game.id, targetName, bytes);
+        setToastMessage(`로컬 폴더(${targetName})에 세이브가 복원되었습니다.`);
       } else if (database.current) {
         await database.current.save(targetName, bytes);
         setToastMessage("브라우저에 세이브 파일이 복원되었습니다.");
@@ -751,7 +811,7 @@ export function Game({ game, onExit }: GameProps) {
       console.error("Upload save error:", err);
       setToastMessage("세이브 파일 복원에 실패했습니다.");
     }
-  }, [game.id, game.saveFile, isLocalDir, saveFile]);
+  }, [game.id, game.saveFile, isBrowserDir, isLocalDir, saveFile]);
 
   const captureCoverImage = useCallback(async () => {
     if (!canvas.current) return;
@@ -762,6 +822,9 @@ export function Game({ game, onExit }: GameProps) {
       if (isLocalDir) {
         await uploadLocalGameFile(game.id, "cover.png", bytes);
         setToastMessage("현재 화면이 런처 대표 썸네일(cover.png)로 저장되었습니다!");
+      } else if (isBrowserDir && getBrowserGameDirHandle(game.id)) {
+        await writeBrowserDirFile(game.id, "cover.png", bytes);
+        setToastMessage("현재 화면이 로컬 폴더 썸네일(cover.png)로 저장되었습니다!");
       } else {
         saveAs(new Blob([bytes], { type: "image/png" }), `${game.id}-cover.png`);
         setToastMessage("현재 화면 스크린샷이 다운로드되었습니다.");
@@ -771,7 +834,7 @@ export function Game({ game, onExit }: GameProps) {
       console.error("Screenshot error:", err);
       setToastMessage("화면 캡처 중 오류가 발생했습니다.");
     }
-  }, [game.id, isLocalDir]);
+  }, [game.id, isBrowserDir, isLocalDir]);
 
   const toggleKeyboard = useCallback(() => {
     setEnabledToggleKeyboard(!enabledToggleKeyboard);
