@@ -13,6 +13,8 @@ export interface GameConfig {
   entry: string; // e.g. 'KOEI.COM' or 'PLAY.BAT'
   executables?: string[];
   saveFile?: string; // e.g. 'KOUKAI2.DAT'
+  cycles?: number | string;
+  useMouse?: boolean;
   coverImage?: string;
   badge?: string;
   category?: string;
@@ -28,11 +30,42 @@ export interface LocalGamesResponse {
 }
 
 export async function fetchLocalGames(): Promise<LocalGamesResponse> {
-  const res = await fetch("/api/local-games", { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`로컬 게임 목록을 불러오지 못했습니다 (HTTP ${res.status})`);
+  try {
+    const res = await fetch("/api/local-games", { cache: "no-store" });
+    const contentType = res.headers.get("content-type") || "";
+    if (res.ok && contentType.includes("application/json")) {
+      return (await res.json()) as LocalGamesResponse;
+    }
+  } catch {
+    // Fallback to static manifest (GitHub Pages / static hosting)
   }
-  return (await res.json()) as LocalGamesResponse;
+
+  const baseUrl = import.meta.env.BASE_URL || "./";
+  const staticRes = await fetch(`${baseUrl}static-games/manifest.json`, {
+    cache: "no-store",
+  });
+  if (!staticRes.ok) {
+    throw new Error(
+      `게임 목록을 불러오지 못했습니다 (HTTP ${staticRes.status})`,
+    );
+  }
+  const data = (await staticRes.json()) as LocalGamesResponse;
+  return {
+    ...data,
+    games: data.games.map((g) => ({
+      ...g,
+      gameFile:
+        g.gameFile.startsWith("http") || g.gameFile.startsWith("/")
+          ? g.gameFile
+          : `${baseUrl}${g.gameFile}`,
+      coverImage:
+        g.coverImage &&
+        !g.coverImage.startsWith("http") &&
+        !g.coverImage.startsWith("/")
+          ? `${baseUrl}${g.coverImage}`
+          : g.coverImage,
+    })),
+  };
 }
 
 export async function uploadLocalGameFile(

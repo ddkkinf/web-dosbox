@@ -12,6 +12,8 @@ export function Launcher({ onSelectGame }: LauncherProps) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [entryOverrides, setEntryOverrides] = useState<Record<string, string>>({});
+  const [selectedVariantIds, setSelectedVariantIds] = useState<Record<string, string>>({});
+  const [groupVariants, setGroupVariants] = useState<boolean>(true);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
@@ -78,6 +80,33 @@ export function Launcher({ onSelectGame }: LauncherProps) {
       return true;
     });
   }, [games, searchQuery, selectedCategory]);
+
+  // Group variants (e.g. water2 + water2_*) into a single card with a variant selector
+  const displayGroups = useMemo(() => {
+    if (!groupVariants) {
+      return filteredGames.map((g) => ({
+        groupKey: g.id,
+        variants: [g],
+      }));
+    }
+
+    const groups: Array<{ groupKey: string; variants: GameConfig[] }> = [];
+    const groupMap = new Map<string, GameConfig[]>();
+
+    for (const game of filteredGames) {
+      const isWater2 = game.id === "water2" || game.id.startsWith("water2_");
+      const key = isWater2 ? "water2_group" : game.id;
+      let list = groupMap.get(key);
+      if (!list) {
+        list = [];
+        groupMap.set(key, list);
+        groups.push({ groupKey: key, variants: list });
+      }
+      list.push(game);
+    }
+
+    return groups;
+  }, [filteredGames, groupVariants]);
 
   const handleLaunchGame = (game: GameConfig) => {
     const chosenEntry = entryOverrides[game.id] || game.entry;
@@ -267,6 +296,19 @@ export function Launcher({ onSelectGame }: LauncherProps) {
                 기타 로컬 게임
               </button>
             )}
+            <div class="h-4 w-px bg-gray-800 mx-1 hidden sm:block" />
+            <button
+              type="button"
+              class={`px-2.5 py-1 text-xs rounded font-medium transition-all flex items-center gap-1 ${
+                groupVariants
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                  : "text-gray-400 hover:text-gray-200"
+              }`}
+              onClick={() => setGroupVariants(!groupVariants)}
+              title="대항해시대2 등 패치/모드 버전을 하나의 카드로 묶거나 펼쳐서 봅니다"
+            >
+              <span>{groupVariants ? "🗂️ 패치/모드 묶어보기 중" : "📑 개별 카드로 보기 중"}</span>
+            </button>
           </div>
 
           <div class="relative w-full sm:w-64">
@@ -328,14 +370,18 @@ export function Launcher({ onSelectGame }: LauncherProps) {
           <>
             {/* Game Cards Grid */}
             <div class="game-grid">
-              {filteredGames.map((game) => {
+              {displayGroups.map(({ groupKey, variants }) => {
+                const selectedVariantId = selectedVariantIds[groupKey];
+                const game =
+                  variants.find((v) => v.id === selectedVariantId) || variants[0];
+                const isGrouped = variants.length > 1;
                 const activeEntry = entryOverrides[game.id] || game.entry;
                 const execList = game.executables && game.executables.length > 0
                   ? game.executables
                   : [game.entry];
 
                 return (
-                  <div key={game.id} class="game-card group">
+                  <div key={groupKey} class="game-card group">
                     {/* Game Thumbnail / Cover */}
                     <div class="game-card__media">
                       {game.coverImage ? (
@@ -353,13 +399,18 @@ export function Launcher({ onSelectGame }: LauncherProps) {
                       )}
 
                       {/* Badge Overlay */}
-                      {game.badge && (
-                        <div class="absolute top-2.5 left-2.5 z-10">
+                      <div class="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
+                        {isGrouped && (
+                          <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-500/95 text-gray-950 shadow-md">
+                            {variants.length}개 버전 통합
+                          </span>
+                        )}
+                        {game.badge && (
                           <span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-amber-500/90 text-gray-950 shadow-md">
                             {game.badge}
                           </span>
-                        </div>
-                      )}
+                        )}
+                      </div>
 
                       {game.version && (
                         <div class="absolute top-2.5 right-2.5 z-10">
@@ -406,6 +457,30 @@ export function Launcher({ onSelectGame }: LauncherProps) {
                           <span class="game-card__year">{game.releaseYear}</span>
                         )}
                       </div>
+
+                      {isGrouped && (
+                        <div class="my-2 p-2 rounded-lg bg-gray-950/80 border border-amber-500/30">
+                          <label class="block text-[10px] font-mono text-amber-300/90 mb-1">
+                            버전 / 패치 모드 선택 ({variants.length}종)
+                          </label>
+                          <select
+                            value={game.id}
+                            onChange={(e) =>
+                              setSelectedVariantIds((prev) => ({
+                                ...prev,
+                                [groupKey]: (e.target as HTMLSelectElement).value,
+                              }))
+                            }
+                            class="w-full px-2.5 py-1.5 rounded bg-gray-900 hover:bg-gray-800 text-xs text-amber-200 font-medium border border-gray-700 cursor-pointer focus:outline-none focus:border-amber-400"
+                          >
+                            {variants.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.title} {v.version ? `(${v.version})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
 
                       <div class="flex flex-wrap items-center gap-1.5 my-2">
                         {game.developer && (

@@ -14,6 +14,8 @@ export interface LocalGameMeta {
   description?: string;
   entry?: string;
   saveFile?: string;
+  cycles?: number | string;
+  useMouse?: boolean;
   coverImage?: string;
   badge?: string;
   category?: string;
@@ -33,6 +35,8 @@ export interface LocalGameResponseItem {
   entry: string;
   executables: string[];
   saveFile?: string;
+  cycles?: number | string;
+  useMouse?: boolean;
   coverImage?: string;
   badge?: string;
   category?: string;
@@ -59,7 +63,38 @@ const COVER_CANDIDATES: Array<{ name: string; mime: string }> = [
   { name: "thumbnail.png", mime: "image/png" },
 ];
 
+const INTERNAL_DRIVERS = new Set([
+  "END.EXE",
+  "ENDING.EXE",
+  "OPEN.EXE",
+  "OPENING.EXE",
+  "OP.EXE",
+  "MA.EXE",
+  "MS.EXE",
+  "QUIT.EXE",
+  "PROTECT.EXE",
+  "RTM.EXE",
+  "MEMCHK.EXE",
+  "GRPDRV.EXE",
+  "FMDRV.COM",
+  "SBOPL2.COM",
+  "TFDED.COM",
+  "HBIOS.COM",
+  "HRDRV.COM",
+  "MDRV.COM",
+  "MDV.COM",
+  "SIG.COM",
+  "AUTOEXEC.BAT",
+  "INSTALL.BAT",
+  "INSTSUB.BAT",
+  "INSTALL.EXE",
+  "INSTALL.COM",
+  "MK.BAT",
+  "MKS.BAT",
+]);
+
 const HELPER_BINARIES = new Set([
+  ...INTERNAL_DRIVERS,
   "SETUP.EXE",
   "SETUP.COM",
   "INSTALL.EXE",
@@ -67,13 +102,8 @@ const HELPER_BINARIES = new Set([
   "SETSOUND.EXE",
   "SOUND.EXE",
   "CONFIG.EXE",
-  "END.EXE",
-  "OPEN.EXE",
-  "GRPDRV.EXE",
-  "FMDRV.COM",
   "HORIEDIT.EXE",
-  "MK.BAT",
-  "MKS.BAT",
+  "HEDITV21.EXE",
 ]);
 
 const PREFERRED_ENTRIES = [
@@ -81,6 +111,7 @@ const PREFERRED_ENTRIES = [
   "START.BAT",
   "RUN.BAT",
   "GAME.BAT",
+  "HERO.COM",
   "KOEI.COM",
   "GAME.COM",
   "MAIN.COM",
@@ -317,8 +348,16 @@ export function localGamesPlugin(customGamesDir?: string): Plugin {
         if (files.length === 0) continue;
 
         const relPaths = files.map((f) => f.relPath);
-        const executables = relPaths.filter(isExecutable);
+        const rawExecs = relPaths.filter(isExecutable);
+        const userExecs = rawExecs.filter(
+          (e) => !INTERNAL_DRIVERS.has(path.basename(e).toUpperCase()),
+        );
+        const executables = userExecs.length > 0 ? userExecs : rawExecs;
         const entry = meta.entry || pickDefaultEntry(executables);
+        const orderedExecs = [
+          entry,
+          ...executables.filter((e) => e.toUpperCase() !== entry.toUpperCase()),
+        ];
         const saveFile = meta.saveFile || pickDefaultSaveFile(relPaths);
         const totalSize = files.reduce((sum, f) => sum + f.size, 0);
 
@@ -339,8 +378,10 @@ export function localGamesPlugin(customGamesDir?: string): Plugin {
           description: meta.description || `${formatDisplayPath(fullPath)} 로컬 폴더 게임`,
           gameFile: `/api/local-games/${encodedId}/bundle`,
           entry,
-          executables: executables.length > 0 ? executables : [entry],
+          executables: orderedExecs,
           saveFile,
+          cycles: meta.cycles,
+          useMouse: meta.useMouse,
           coverImage,
           badge: meta.badge || "로컬 폴더",
           category: meta.category,
@@ -564,6 +605,13 @@ export function localGamesPlugin(customGamesDir?: string): Plugin {
         }
 
         const body = await readRequestBody(req);
+        if (fs.existsSync(finalDest)) {
+          try {
+            fs.chmodSync(finalDest, 0o644);
+          } catch {
+            // Ignore chmod error if not permitted
+          }
+        }
         const tmpFile = `${finalDest}.tmp.${process.pid}.${Date.now()}`;
         fs.writeFileSync(tmpFile, body);
         fs.renameSync(tmpFile, finalDest);

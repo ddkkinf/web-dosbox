@@ -57,12 +57,18 @@ export function restoreAddEventListener(target: HasAddEventListener) {
   blockedEventHandlers.delete(target);
 }
 
-export function createKeyboardEvent(type: string, keyCode: number) {
+export function createKeyboardEvent(
+  type: string,
+  keyCode: number,
+  location = 0,
+) {
   const event = document.createEvent("KeyboardEvent");
   Object.defineProperties(event, {
     type: { get: () => type },
     keyCode: { get: () => keyCode },
     which: { get: () => keyCode },
+    charCode: { get: () => 0 },
+    location: { get: () => location },
   });
   return event;
 }

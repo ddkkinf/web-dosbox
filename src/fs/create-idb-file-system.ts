@@ -1,7 +1,9 @@
 export interface IdbFileSystem {
   delete(key: string): Promise<void>;
+  clear(): Promise<void>;
   save(key: string, data: Uint8Array): Promise<void>;
   load(key: string): Promise<Uint8Array | null>;
+  loadAll(): Promise<Array<{ key: string; data: Uint8Array }>>;
 }
 
 export async function createIdbFileSystem(
@@ -30,6 +32,17 @@ export async function createIdbFileSystem(
         };
       });
     },
+    clear(): Promise<void> {
+      return new Promise<void>((resolve) => {
+        const request = db
+          .transaction("files", "readwrite")
+          .objectStore("files")
+          .clear();
+        request.onsuccess = function () {
+          resolve();
+        };
+      });
+    },
     save(key: string, data: Uint8Array): Promise<void> {
       return new Promise<void>((resolve) => {
         const request = db
@@ -49,6 +62,31 @@ export async function createIdbFileSystem(
           .get(key);
         request.onsuccess = function (ev) {
           resolve((ev.target as IDBRequest<Uint8Array>).result ?? null);
+        };
+      });
+    },
+    loadAll(): Promise<Array<{ key: string; data: Uint8Array }>> {
+      return new Promise((resolve) => {
+        const items: Array<{ key: string; data: Uint8Array }> = [];
+        const request = db
+          .transaction("files", "readonly")
+          .objectStore("files")
+          .openCursor();
+        request.onsuccess = function (ev) {
+          const cursor = (ev.target as IDBRequest<IDBCursorWithValue | null>)
+            .result;
+          if (cursor) {
+            items.push({
+              key: String(cursor.key),
+              data: cursor.value as Uint8Array,
+            });
+            cursor.continue();
+          } else {
+            resolve(items);
+          }
+        };
+        request.onerror = function () {
+          resolve(items);
         };
       });
     },

@@ -161,6 +161,13 @@
     @apply absolute inset-x-0 inset-y-0 flex items-center justify-center;
   }
 
+  /* Allow desktop mouse clicks & cursor motion to pass directly to the DOSBox canvas */
+  @media (pointer: fine) {
+    .game__event-blocker {
+      pointer-events: none;
+    }
+  }
+
   /** Toast */
   .toast {
     @apply absolute bottom-6 left-1/2 -translate-x-1/2 px-3 py-2 bg-gray-900/90 text-amber-300 border border-amber-500/30 shadow-2xl pointer-events-none rounded transition-opacity duration-500 opacity-0 text-xs whitespace-pre text-center z-50;

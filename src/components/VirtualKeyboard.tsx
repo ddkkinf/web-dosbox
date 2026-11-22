@@ -34,6 +34,8 @@ const enum KeyCode {
   PageUp = 33,
   PageDown = 34,
   Escape = 27,
+  Shift = 16,
+  Space = 32,
 }
 
 function handlePrevent(event: MouseEvent) {
@@ -214,6 +216,24 @@ export function VirtualKeyboard({ onKeyUp, onKeyDown }: VirtualKeyboardProps) {
                 }
                 onKeyDown={() => onKeyDown?.(KeyCode.PageDown)}
                 onKeyUp={() => onKeyUp?.(KeyCode.PageDown)}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td colSpan={2}>
+              <Key
+                label="Shift"
+                description="Action / Sword"
+                onKeyDown={() => onKeyDown?.(KeyCode.Shift)}
+                onKeyUp={() => onKeyUp?.(KeyCode.Shift)}
+              />
+            </td>
+            <td colSpan={2}>
+              <Key
+                label="Space"
+                description="Time / Skip"
+                onKeyDown={() => onKeyDown?.(KeyCode.Space)}
+                onKeyUp={() => onKeyUp?.(KeyCode.Space)}
               />
             </td>
           </tr>

@@ -4,6 +4,7 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 import { localGamesPlugin } from "./server/local-games-plugin";
 
 export default defineConfig({
+  base: "./",
   plugins: [
     preact(),
     localGamesPlugin(),
@@ -21,19 +22,16 @@ export default defineConfig({
           src: "node_modules/js-dos/dist/wdosbox.js",
           dest: "static/js-dos",
           transform: (content) =>
-            content.replace(
-              "bufferingDelay=50/1e3",
-              "bufferingDelay=200/1e3",
-            ),
+            content.replace("gamepads[i]!==undefined", "Boolean(gamepads[i])"),
         },
         {
           src: "node_modules/js-dos/dist/js-dos.js",
           dest: "static/js-dos",
           transform: (content) =>
             content
-              .replace("blocksize=1024", "blocksize=4096")
-              .replace("prebuffer=20", "prebuffer=100")
-              .replace("pcspeaker=true", "pcspeaker=false"),
+              .replace("pcspeaker=true", "pcspeaker=false")
+              .replace("joysticktype=auto", "joysticktype=none")
+              .replace("js-dos-cache (", "js-dos-cache-v3 ("),
         },
       ],
     }),
